@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import asyncio
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -16,10 +17,6 @@ from aiogram.filters import CommandStart, Command
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL = "@pbtestboto"
 
-# Настройки батла
-PRIZE = "1000₽"
-RESULT_TIME = "22:00"
-
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан")
 
@@ -28,8 +25,16 @@ dp = Dispatcher()
 
 DB = "battle.db"
 
+# ================= НАСТРОЙКИ =================
 
-# ---------------- DATABASE ----------------
+DEFAULT_PRIZE = "1000₽"
+DEFAULT_RESULT_TIME = "22:00"
+
+# ВАЖНО: сюда впиши свой Telegram ID
+ADMIN_ID = 123456789
+
+
+# ================= DATABASE =================
 
 def db():
     return sqlite3.connect(DB)
@@ -70,11 +75,65 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
+    # Создаём настройки по умолчанию
+    cur.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        ("prize", DEFAULT_PRIZE)
+    )
+
+    cur.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        ("result_time", DEFAULT_RESULT_TIME)
+    )
+
     con.commit()
     con.close()
 
 
-# ---------------- KEYBOARD ----------------
+def get_setting(key):
+    con = db()
+    cur = con.cursor()
+
+    cur.execute(
+        "SELECT value FROM settings WHERE key = ?",
+        (key,)
+    )
+
+    result = cur.fetchone()
+    con.close()
+
+    if result:
+        return result[0]
+
+    return None
+
+
+def set_setting(key, value):
+    con = db()
+    cur = con.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO settings (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+        """,
+        (key, value)
+    )
+
+    con.commit()
+    con.close()
+
+
+# ================= KEYBOARD =================
 
 def vote_keyboard(battle_id, votes1=0, votes2=0):
     return InlineKeyboardMarkup(
@@ -93,10 +152,122 @@ def vote_keyboard(battle_id, votes1=0, votes2=0):
     )
 
 
-# ---------------- START ----------------
+def admin_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💰 Изменить приз",
+                    callback_data="admin_prize"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🕐 Изменить время",
+                    callback_data="admin_time"
+                )
+            ]
+        ]
+    )
+
+
+# ================= ADMIN =================
+
+def is_admin(user_id):
+    return user_id == ADMIN_ID
+
+
+@dp.message(Command("admin"))
+async def admin_panel(message: Message):
+
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступ запрещён.")
+        return
+
+    prize = get_setting("prize")
+    result_time = get_setting("result_time")
+
+    await message.answer(
+        "👑 АДМИН-ПАНЕЛЬ\n\n"
+        f"💰 Приз: {prize}\n"
+        f"🕐 Окончание: {result_time}\n\n"
+        "Выбери настройку:",
+        reply_markup=admin_keyboard()
+    )
+
+
+@dp.callback_query(F.data == "admin_prize")
+async def admin_prize(callback: CallbackQuery):
+
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа.", show_alert=True)
+        return
+
+    await callback.message.answer(
+        "💰 Введи новый приз.\n\n"
+        "Например:\n"
+        "5000₽"
+    )
+
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_time")
+async def admin_time(callback: CallbackQuery):
+
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа.", show_alert=True)
+        return
+
+    await callback.message.answer(
+        "🕐 Введи новое время окончания.\n\n"
+        "Формат:\n"
+        "ЧЧ:ММ\n\n"
+        "Например:\n"
+        "23:30"
+    )
+
+    await callback.answer()
+
+
+@dp.message()
+async def admin_text_handler(message: Message):
+
+    if not is_admin(message.from_user.id):
+        return
+
+    text = message.text.strip() if message.text else ""
+
+    # Проверяем время
+    try:
+        datetime.strptime(text, "%H:%M")
+
+        set_setting("result_time", text)
+
+        await message.answer(
+            f"✅ Время окончания изменено на {text}"
+        )
+
+        return
+
+    except ValueError:
+        pass
+
+    # Если это не время — можно считать призом,
+    # но команды и обычные сообщения не трогаем
+    if text and not text.startswith("/"):
+        set_setting("prize", text)
+
+        await message.answer(
+            f"✅ Приз изменён на {text}"
+        )
+
+
+# ================= START =================
 
 @dp.message(CommandStart())
 async def start(message: Message):
+
     await message.answer(
         "📸 Фотобатлы\n\n"
         "Отправь мне свою фотографию.\n"
@@ -104,10 +275,11 @@ async def start(message: Message):
     )
 
 
-# ---------------- CANCEL ----------------
+# ================= CANCEL =================
 
 @dp.message(Command("cancel"))
 async def cancel(message: Message):
+
     con = db()
     cur = con.cursor()
 
@@ -117,35 +289,38 @@ async def cancel(message: Message):
     )
 
     deleted = cur.rowcount
+
     con.commit()
     con.close()
 
     if deleted:
-        await message.answer("❌ Твоя фотография удалена из очереди.")
+        await message.answer(
+            "❌ Твоя фотография удалена из очереди."
+        )
     else:
-        await message.answer("У тебя сейчас нет фотографии в очереди.")
+        await message.answer(
+            "У тебя сейчас нет фотографии в очереди."
+        )
 
 
-# ---------------- PHOTO ----------------
+# ================= PHOTO =================
 
 @dp.message(F.photo)
 async def photo_received(message: Message):
+
     user_id = message.from_user.id
     username = message.from_user.username or ""
 
-    # Берём фотографию максимального качества
     photo_id = message.photo[-1].file_id
 
     con = db()
     cur = con.cursor()
 
-    # Если пользователь уже стоит в очереди — заменяем его фото
     cur.execute(
         "DELETE FROM waiting WHERE user_id = ?",
         (user_id,)
     )
 
-    # Проверяем, есть ли уже ожидающий участник
     cur.execute(
         "SELECT user_id, username, photo_id FROM waiting LIMIT 1"
     )
@@ -153,9 +328,11 @@ async def photo_received(message: Message):
     opponent = cur.fetchone()
 
     if not opponent:
+
         cur.execute(
             """
-            INSERT INTO waiting (user_id, username, photo_id)
+            INSERT INTO waiting
+            (user_id, username, photo_id)
             VALUES (?, ?, ?)
             """,
             (user_id, username, photo_id)
@@ -169,24 +346,26 @@ async def photo_received(message: Message):
             "Ты участник №1.\n"
             "Теперь ждём второго участника."
         )
+
         return
 
-    # Второй участник найден
     user1, username1, photo1 = opponent
 
-    # Не даём одному пользователю стать обоими участниками
     if user1 == user_id:
+
         con.close()
-        await message.answer("❌ Нельзя участвовать самому с собой.")
+
+        await message.answer(
+            "❌ Нельзя участвовать самому с собой."
+        )
+
         return
 
-    # Убираем первого из очереди
     cur.execute(
         "DELETE FROM waiting WHERE user_id = ?",
         (user1,)
     )
 
-    # Создаём батл
     cur.execute(
         """
         INSERT INTO battles
@@ -201,20 +380,18 @@ async def photo_received(message: Message):
     con.commit()
     con.close()
 
+    prize = get_setting("prize")
+    result_time = get_setting("result_time")
+
     await message.answer(
         f"🔥 Батл сформирован!\n\n"
         f"Ты участник №2.\n"
         f"Батл №{battle_id} опубликован в канале."
     )
 
-    # Публикуем фотографии
     media = [
-        InputMediaPhoto(
-            media=photo1
-        ),
-        InputMediaPhoto(
-            media=photo_id
-        )
+        InputMediaPhoto(media=photo1),
+        InputMediaPhoto(media=photo_id)
     ]
 
     await bot.send_media_group(
@@ -222,13 +399,12 @@ async def photo_received(message: Message):
         media=media
     )
 
-    # Отдельное сообщение с голосованием
     text = (
         f"📸 ФОТОБАТЛ №{battle_id}\n\n"
         f"1 — 🔥\n"
         f"2 — ❤️\n\n"
-        f"Итоги в {RESULT_TIME}\n"
-        f"Приз — {PRIZE}"
+        f"Итоги в {result_time}\n"
+        f"Приз — {prize}"
     )
 
     sent = await bot.send_message(
@@ -237,7 +413,6 @@ async def photo_received(message: Message):
         reply_markup=vote_keyboard(battle_id)
     )
 
-    # Запоминаем ID сообщения с кнопками
     con = db()
     cur = con.cursor()
 
@@ -254,20 +429,21 @@ async def photo_received(message: Message):
     con.close()
 
 
-# ---------------- VOTE ----------------
+# ================= VOTE =================
 
 @dp.callback_query(F.data.startswith("vote:"))
 async def vote(callback: CallbackQuery):
+
     _, battle_id, choice = callback.data.split(":")
 
     battle_id = int(battle_id)
     choice = int(choice)
+
     user_id = callback.from_user.id
 
     con = db()
     cur = con.cursor()
 
-    # Проверяем батл
     cur.execute(
         """
         SELECT votes1, votes2, active, message_id
@@ -280,18 +456,29 @@ async def vote(callback: CallbackQuery):
     battle = cur.fetchone()
 
     if not battle:
+
         con.close()
-        await callback.answer("Батл не найден.", show_alert=True)
+
+        await callback.answer(
+            "Батл не найден.",
+            show_alert=True
+        )
+
         return
 
     votes1, votes2, active, message_id = battle
 
     if not active:
+
         con.close()
-        await callback.answer("Голосование уже завершено.", show_alert=True)
+
+        await callback.answer(
+            "Голосование уже завершено.",
+            show_alert=True
+        )
+
         return
 
-    # Проверяем предыдущий голос
     cur.execute(
         """
         SELECT choice
@@ -304,14 +491,19 @@ async def vote(callback: CallbackQuery):
     old_vote = cur.fetchone()
 
     if old_vote:
+
         old_choice = old_vote[0]
 
         if old_choice == choice:
+
             con.close()
-            await callback.answer("Ты уже проголосовал за этот вариант.")
+
+            await callback.answer(
+                "Ты уже проголосовал за этот вариант."
+            )
+
             return
 
-        # Переключаем голос
         if old_choice == 1:
             votes1 -= 1
         else:
@@ -332,7 +524,7 @@ async def vote(callback: CallbackQuery):
         )
 
     else:
-        # Новый голос
+
         if choice == 1:
             votes1 += 1
         else:
@@ -359,7 +551,6 @@ async def vote(callback: CallbackQuery):
     con.commit()
     con.close()
 
-    # Обновляем цифры на кнопках
     await bot.edit_message_reply_markup(
         chat_id=CHANNEL,
         message_id=message_id,
@@ -373,9 +564,10 @@ async def vote(callback: CallbackQuery):
     await callback.answer("Голос засчитан! 👍")
 
 
-# ---------------- MAIN ----------------
+# ================= MAIN =================
 
 async def main():
+
     init_db()
 
     print("Бот запущен!")
