@@ -31,7 +31,7 @@ DEFAULT_PRIZE = "1000₽"
 DEFAULT_RESULT_TIME = "22:00"
 
 # ВАЖНО: сюда впиши свой Telegram ID
-ADMIN_ID = 123456789
+ADMIN_ID = 8641624229
 
 
 # ================= DATABASE =================
