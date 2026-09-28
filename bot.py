@@ -25,7 +25,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 CHANNEL = "@pbtestboto"
 
-# ВСТАВЬ СЮДА СВОЙ TELEGRAM ID
 ADMIN_ID = 8641624229
 
 DB_NAME = "battle.db"
@@ -33,9 +32,6 @@ DB_NAME = "battle.db"
 DEFAULT_PRIZE = "1000₽"
 DEFAULT_RESULT_TIME = "22:00"
 
-
-# Тарифы:
-# количество бустов -> цена в Stars
 DEFAULT_BOOSTS = {
     10: 20,
     25: 45,
@@ -43,10 +39,8 @@ DEFAULT_BOOSTS = {
     100: 140,
 }
 
-
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN environment variable is not set")
-
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
@@ -66,7 +60,6 @@ def init_db():
     conn = db()
     cur = conn.cursor()
 
-    # Ожидание фотографии
     cur.execute("""
         CREATE TABLE IF NOT EXISTS waiting (
             user_id INTEGER PRIMARY KEY,
@@ -75,7 +68,6 @@ def init_db():
         )
     """)
 
-    # Батлы
     cur.execute("""
         CREATE TABLE IF NOT EXISTS battles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +82,6 @@ def init_db():
         )
     """)
 
-    # Обычные голоса
     cur.execute("""
         CREATE TABLE IF NOT EXISTS votes (
             battle_id INTEGER NOT NULL,
@@ -100,7 +91,6 @@ def init_db():
         )
     """)
 
-    # Настройки
     cur.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -108,7 +98,6 @@ def init_db():
         )
     """)
 
-    # Платные бусты
     cur.execute("""
         CREATE TABLE IF NOT EXISTS boosts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,7 +111,6 @@ def init_db():
         )
     """)
 
-    # Заказы Stars
     cur.execute("""
         CREATE TABLE IF NOT EXISTS boost_orders (
             payload TEXT PRIMARY KEY,
@@ -136,7 +124,6 @@ def init_db():
         )
     """)
 
-    # Настройки по умолчанию
     cur.execute("""
         INSERT OR IGNORE INTO settings (key, value)
         VALUES ('prize', ?)
@@ -147,7 +134,6 @@ def init_db():
         VALUES ('result_time', ?)
     """, (DEFAULT_RESULT_TIME,))
 
-    # Цены бустов
     for amount, stars in DEFAULT_BOOSTS.items():
         cur.execute("""
             INSERT OR IGNORE INTO settings (key, value)
@@ -231,31 +217,6 @@ def get_battle(battle_id):
 # =========================================================
 # KEYBOARDS
 # =========================================================
-
-def vote_keyboard(battle_id):
-    boost_url = f"https://t.me/{BOT_USERNAME}?start=boost_{battle_id}"
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔥 0",
-                    callback_data=f"vote:{battle_id}:1"
-                ),
-                InlineKeyboardButton(
-                    text="❤️ 0",
-                    callback_data=f"vote:{battle_id}:2"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="БУСТ РЕАКЦИЙ ⚡️",
-                    url=boost_url
-                )
-            ]
-        ]
-    )
-
 
 def vote_keyboard_counts(battle_id, votes1, votes2):
     boost_url = f"https://t.me/{BOT_USERNAME}?start=boost_{battle_id}"
@@ -397,8 +358,6 @@ async def start_handler(message: Message):
 
     text = message.text or ""
 
-    # Deep link:
-    # /start boost_123
     if text.startswith("/start boost_"):
 
         try:
@@ -502,7 +461,10 @@ async def admin_handler(message: Message):
 async def admin_back(callback: CallbackQuery):
 
     if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Нет доступа", show_alert=True)
+        await callback.answer(
+            "Нет доступа",
+            show_alert=True
+        )
         return
 
     prize = get_setting("prize", DEFAULT_PRIZE)
@@ -526,7 +488,10 @@ async def admin_back(callback: CallbackQuery):
 async def admin_prize(callback: CallbackQuery):
 
     if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Нет доступа", show_alert=True)
+        await callback.answer(
+            "Нет доступа",
+            show_alert=True
+        )
         return
 
     await callback.message.answer(
@@ -543,7 +508,10 @@ async def admin_prize(callback: CallbackQuery):
 async def admin_time(callback: CallbackQuery):
 
     if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Нет доступа", show_alert=True)
+        await callback.answer(
+            "Нет доступа",
+            show_alert=True
+        )
         return
 
     await callback.message.answer(
@@ -559,7 +527,10 @@ async def admin_time(callback: CallbackQuery):
 async def admin_boosts(callback: CallbackQuery):
 
     if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Нет доступа", show_alert=True)
+        await callback.answer(
+            "Нет доступа",
+            show_alert=True
+        )
         return
 
     text = (
@@ -588,7 +559,10 @@ async def admin_boosts(callback: CallbackQuery):
 async def admin_boost_select(callback: CallbackQuery):
 
     if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Нет доступа", show_alert=True)
+        await callback.answer(
+            "Нет доступа",
+            show_alert=True
+        )
         return
 
     amount = int(
@@ -608,13 +582,11 @@ async def admin_boost_select(callback: CallbackQuery):
 
 # =========================================================
 # ADMIN TEXT
+# ВАЖНО: фильтр F.text + F.from_user.id
 # =========================================================
 
-@dp.message()
+@dp.message(F.from_user.id == ADMIN_ID, F.text)
 async def admin_text_handler(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
 
     text = (message.text or "").strip()
 
@@ -639,14 +611,7 @@ async def admin_text_handler(message: Message):
         except ValueError:
             pass
 
-    # Если это число — меняем цену приза
-    # или цену выбранного буста через временное состояние
-    #
-    # Для простоты цена буста меняется через команду:
-    # /boostprice 10 25
-    #
-    # Поэтому обычное число здесь считается призом.
-
+    # Число = новый приз
     if text.isdigit():
 
         set_setting("prize", text)
@@ -725,10 +690,14 @@ async def photo_handler(message: Message):
 
     photo_id = message.photo[-1].file_id
 
+    print(
+        f"PHOTO RECEIVED | user={user_id} | photo={photo_id}"
+    )
+
     conn = db()
     cur = conn.cursor()
 
-    # Проверяем, не стоит ли уже пользователь в очереди
+    # Проверяем очередь
     cur.execute(
         "SELECT user_id FROM waiting WHERE user_id = ?",
         (user_id,)
@@ -744,7 +713,7 @@ async def photo_handler(message: Message):
 
         return
 
-    # Ищем другого участника
+    # Ищем соперника
     cur.execute("""
         SELECT user_id, username, photo_id
         FROM waiting
@@ -754,6 +723,7 @@ async def photo_handler(message: Message):
 
     waiting_user = cur.fetchone()
 
+    # Если соперника нет
     if not waiting_user:
 
         cur.execute("""
@@ -777,13 +747,16 @@ async def photo_handler(message: Message):
             "⏳ Ищу тебе соперника..."
         )
 
+        print(
+            f"PHOTO QUEUED | user={user_id}"
+        )
+
         return
 
     opponent_id = waiting_user[0]
     opponent_username = waiting_user[1]
     opponent_photo = waiting_user[2]
 
-    # Нельзя создать батл с самим собой
     if opponent_id == user_id:
         conn.close()
 
@@ -823,6 +796,11 @@ async def photo_handler(message: Message):
     conn.commit()
     conn.close()
 
+    print(
+        f"BATTLE CREATED | battle={battle_id} | "
+        f"user1={opponent_id} | user2={user_id}"
+    )
+
     # Публикуем фотографии
     media = [
         InputMediaPhoto(
@@ -834,6 +812,7 @@ async def photo_handler(message: Message):
     ]
 
     try:
+
         await bot.send_media_group(
             chat_id=CHANNEL,
             media=media
@@ -887,10 +866,14 @@ async def photo_handler(message: Message):
             f"Твой батл №{battle_id} уже опубликован."
         )
 
+        print(
+            f"BATTLE PUBLISHED | battle={battle_id}"
+        )
+
     except Exception as e:
 
         print(
-            f"Ошибка публикации батла: {e}"
+            f"Ошибка публикации батла: {repr(e)}"
         )
 
         await message.answer(
@@ -915,7 +898,6 @@ async def vote_handler(callback: CallbackQuery):
     conn = db()
     cur = conn.cursor()
 
-    # Проверяем батл
     cur.execute("""
         SELECT
             votes1,
@@ -953,7 +935,6 @@ async def vote_handler(callback: CallbackQuery):
 
         return
 
-    # Проверяем старый голос
     cur.execute("""
         SELECT choice
         FROM votes
@@ -979,7 +960,6 @@ async def vote_handler(callback: CallbackQuery):
 
             return
 
-        # Переключение голоса
         if old_choice == 1:
             votes1 -= 1
         else:
@@ -1011,7 +991,6 @@ async def vote_handler(callback: CallbackQuery):
             choice
         ))
 
-    # Добавляем новый голос
     if choice == 1:
         votes1 += 1
     else:
@@ -1031,8 +1010,8 @@ async def vote_handler(callback: CallbackQuery):
     conn.commit()
     conn.close()
 
-    # Обновляем кнопки
     try:
+
         await bot.edit_message_reply_markup(
             chat_id=CHANNEL,
             message_id=message_id,
@@ -1042,9 +1021,11 @@ async def vote_handler(callback: CallbackQuery):
                 votes2
             )
         )
+
     except Exception as e:
+
         print(
-            f"Не удалось обновить кнопки: {e}"
+            f"Не удалось обновить кнопки: {repr(e)}"
         )
 
     await callback.answer(
@@ -1199,7 +1180,6 @@ async def boost_buy_handler(
         )
         return
 
-    # Уникальный payload
     payload = (
         f"boost:"
         f"{battle_id}:"
@@ -1258,7 +1238,7 @@ async def boost_buy_handler(
     except Exception as e:
 
         print(
-            f"Ошибка создания invoice: {e}"
+            f"Ошибка создания invoice: {repr(e)}"
         )
 
         conn = db()
@@ -1410,7 +1390,6 @@ async def successful_payment_handler(
     stars = order[4]
     status = order[5]
 
-    # Защита от повторной обработки
     if status == "paid":
         conn.close()
 
@@ -1420,7 +1399,6 @@ async def successful_payment_handler(
 
         return
 
-    # Сохраняем буст
     cur.execute("""
         INSERT INTO boosts (
             battle_id,
@@ -1442,7 +1420,6 @@ async def successful_payment_handler(
         datetime.utcnow().isoformat()
     ))
 
-    # Помечаем заказ оплаченным
     cur.execute("""
         UPDATE boost_orders
         SET status = 'paid',
@@ -1471,6 +1448,7 @@ async def successful_payment_handler(
 # =========================================================
 
 def get_boosts(battle_id):
+
     conn = db()
     cur = conn.cursor()
 
@@ -1484,6 +1462,7 @@ def get_boosts(battle_id):
     """, (battle_id,))
 
     rows = cur.fetchall()
+
     conn.close()
 
     result = {
