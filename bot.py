@@ -26,7 +26,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL = "@pbtestboto"
 
 # ВСТАВЬ СЮДА СВОЙ TELEGRAM ID
-ADMIN_ID = 123456789
+ADMIN_ID = 8641624229
 
 DB_NAME = "battle.db"
 
