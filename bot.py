@@ -15,6 +15,7 @@ from aiogram.types import (
     PreCheckoutQuery,
 )
 
+
 # =========================================================
 # НАСТРОЙКИ
 # =========================================================
@@ -22,14 +23,13 @@ from aiogram.types import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 CHANNEL = "@pbtestboto"
-BOT_USERNAME = "pbpriem_bot"
 
 ADMIN_ID = 8641624229
 
 DEFAULT_PRIZE = "1000₽"
 DEFAULT_RESULT_TIME = "22:00"
 
-# 1 купленный голос = 2 Telegram Stars
+# 1 купленный голос = 2 Stars
 BOOST_PRICE_PER_VOTE = 2
 
 
@@ -65,80 +65,7 @@ db = sqlite3.connect(
 db.row_factory = sqlite3.Row
 
 
-def init_db():
-
-    cur = db.cursor()
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS waiting (
-            user_id INTEGER PRIMARY KEY,
-            photo_id TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS battles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-            user1_id INTEGER NOT NULL,
-            user1_photo TEXT NOT NULL,
-
-            user2_id INTEGER NOT NULL,
-            user2_photo TEXT NOT NULL,
-
-            channel_photo1_message_id INTEGER,
-            channel_photo2_message_id INTEGER,
-            vote_message_id INTEGER,
-
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS votes (
-            battle_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            participant INTEGER NOT NULL,
-
-            PRIMARY KEY (battle_id, user_id)
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS boosts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-            battle_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            participant INTEGER NOT NULL,
-
-            votes INTEGER NOT NULL,
-            stars INTEGER NOT NULL,
-
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    # Настройки по умолчанию
-    if get_setting("prize") is None:
-        set_setting("prize", DEFAULT_PRIZE)
-
-    if get_setting("result_time") is None:
-        set_setting("result_time", DEFAULT_RESULT_TIME)
-
-    db.commit()
-
-
 def get_setting(key):
-
     cur = db.cursor()
 
     cur.execute(
@@ -155,18 +82,98 @@ def get_setting(key):
 
 
 def set_setting(key, value):
+    cur = db.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO settings(key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+        """,
+        (key, str(value))
+    )
+
+    db.commit()
+
+
+def init_db():
 
     cur = db.cursor()
 
-    cur.execute("""
-        INSERT INTO settings(key, value)
-        VALUES(?, ?)
-        ON CONFLICT(key)
-        DO UPDATE SET value = excluded.value
-    """, (
-        key,
-        str(value)
-    ))
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS waiting (
+            user_id INTEGER PRIMARY KEY,
+            photo_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS battles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            user1_id INTEGER NOT NULL,
+            user1_photo TEXT NOT NULL,
+
+            user2_id INTEGER NOT NULL,
+            user2_photo TEXT NOT NULL,
+
+            channel_photo1_message_id INTEGER,
+            channel_photo2_message_id INTEGER,
+            vote_message_id INTEGER,
+
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS votes (
+            battle_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            participant INTEGER NOT NULL,
+
+            PRIMARY KEY (battle_id, user_id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS boosts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            battle_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            participant INTEGER NOT NULL,
+
+            votes INTEGER NOT NULL,
+            stars INTEGER NOT NULL,
+
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    if get_setting("prize") is None:
+        set_setting("prize", DEFAULT_PRIZE)
+
+    if get_setting("result_time") is None:
+        set_setting("result_time", DEFAULT_RESULT_TIME)
 
     db.commit()
 
@@ -175,21 +182,16 @@ init_db()
 
 
 # =========================================================
-# ВРЕМЕННЫЕ СОСТОЯНИЯ АДМИНА
+# СОСТОЯНИЯ
 # =========================================================
 
+# user_id -> "prize" / "time"
 admin_edit_mode = {}
-
-
-# =========================================================
-# СОСТОЯНИЕ ПОКУПКИ БУСТА
-# =========================================================
 
 # user_id -> {
 #     "battle_id": int,
-#     "participant": 1/2
+#     "participant": int
 # }
-
 boost_pending = {}
 
 
@@ -197,11 +199,7 @@ boost_pending = {}
 # KEYBOARDS
 # =========================================================
 
-def vote_keyboard(
-    battle_id,
-    votes1,
-    votes2
-):
+def vote_keyboard(battle_id, votes1, votes2):
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -245,22 +243,52 @@ def participant_keyboard(battle_id):
     )
 
 
+def admin_keyboard():
+
+    prize = get_setting("prize")
+    result_time = get_setting("result_time")
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"🏆 Приз: {prize}",
+                    callback_data="admin_prize"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"⏰ Время: {result_time}",
+                    callback_data="admin_time"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Статистика",
+                    callback_data="admin_stats"
+                )
+            ]
+        ]
+    )
+
+
 # =========================================================
-# ПОЛУЧЕНИЕ ГОЛОСОВ
+# ГОЛОСА
 # =========================================================
 
 def get_normal_votes(battle_id):
 
     cur = db.cursor()
 
-    cur.execute("""
+    cur.execute(
+        """
         SELECT participant, COUNT(*) AS cnt
         FROM votes
         WHERE battle_id = ?
         GROUP BY participant
-    """, (
-        battle_id,
-    ))
+        """,
+        (battle_id,)
+    )
 
     result = {
         1: 0,
@@ -268,7 +296,6 @@ def get_normal_votes(battle_id):
     }
 
     for row in cur.fetchall():
-
         result[row["participant"]] = row["cnt"]
 
     return result
@@ -278,14 +305,15 @@ def get_boost_votes(battle_id):
 
     cur = db.cursor()
 
-    cur.execute("""
+    cur.execute(
+        """
         SELECT participant, COALESCE(SUM(votes), 0) AS cnt
         FROM boosts
         WHERE battle_id = ?
         GROUP BY participant
-    """, (
-        battle_id,
-    ))
+        """,
+        (battle_id,)
+    )
 
     result = {
         1: 0,
@@ -293,7 +321,6 @@ def get_boost_votes(battle_id):
     }
 
     for row in cur.fetchall():
-
         result[row["participant"]] = row["cnt"]
 
     return result
@@ -302,11 +329,11 @@ def get_boost_votes(battle_id):
 def get_total_votes(battle_id):
 
     normal = get_normal_votes(battle_id)
-    boost = get_boost_votes(battle_id)
+    boosts = get_boost_votes(battle_id)
 
     return {
-        1: normal[1] + boost[1],
-        2: normal[2] + boost[2]
+        1: normal[1] + boosts[1],
+        2: normal[2] + boosts[2]
     }
 
 
@@ -352,6 +379,225 @@ async def cancel_handler(message: Message):
 
 
 # =========================================================
+# /ADMIN
+# =========================================================
+
+@dp.message(Command("admin"))
+async def admin_handler(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("Нет доступа.")
+        return
+
+    await message.answer(
+        "⚙️ <b>АДМИН-ПАНЕЛЬ</b>\n\n"
+        f"🏆 Приз: <b>{get_setting('prize')}</b>\n"
+        f"⏰ Итоги: <b>{get_setting('result_time')}</b>\n\n"
+        f"⚡️ Цена буста: "
+        f"<b>{BOOST_PRICE_PER_VOTE} ⭐ / голос</b>",
+        parse_mode="HTML",
+        reply_markup=admin_keyboard()
+    )
+
+
+# =========================================================
+# ADMIN — ПРИЗ
+# =========================================================
+
+@dp.callback_query(F.data == "admin_prize")
+async def admin_prize(callback: CallbackQuery):
+
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer(
+            "Нет доступа.",
+            show_alert=True
+        )
+        return
+
+    admin_edit_mode[ADMIN_ID] = "prize"
+
+    await callback.message.answer(
+        "🏆 Введи новый размер приза.\n\n"
+        "Например:\n"
+        "<code>2000</code>",
+        parse_mode="HTML"
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# ADMIN — ВРЕМЯ
+# =========================================================
+
+@dp.callback_query(F.data == "admin_time")
+async def admin_time(callback: CallbackQuery):
+
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer(
+            "Нет доступа.",
+            show_alert=True
+        )
+        return
+
+    admin_edit_mode[ADMIN_ID] = "time"
+
+    await callback.message.answer(
+        "⏰ Введи новое время окончания.\n\n"
+        "Формат:\n"
+        "<code>22:00</code>",
+        parse_mode="HTML"
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# ADMIN — СТАТИСТИКА
+# =========================================================
+
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats(callback: CallbackQuery):
+
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer(
+            "Нет доступа.",
+            show_alert=True
+        )
+        return
+
+    cur = db.cursor()
+
+    cur.execute(
+        "SELECT COUNT(*) AS cnt FROM battles"
+    )
+    battles = cur.fetchone()["cnt"]
+
+    cur.execute(
+        "SELECT COUNT(*) AS cnt FROM votes"
+    )
+    normal_votes = cur.fetchone()["cnt"]
+
+    cur.execute(
+        "SELECT COALESCE(SUM(votes), 0) AS cnt FROM boosts"
+    )
+    boost_votes = cur.fetchone()["cnt"]
+
+    cur.execute(
+        "SELECT COALESCE(SUM(stars), 0) AS cnt FROM boosts"
+    )
+    stars = cur.fetchone()["cnt"]
+
+    await callback.message.answer(
+        "📊 <b>СТАТИСТИКА</b>\n\n"
+        f"⚔️ Батлов: <b>{battles}</b>\n"
+        f"🗳 Обычных голосов: <b>{normal_votes}</b>\n"
+        f"⚡️ Купленных голосов: <b>{boost_votes}</b>\n"
+        f"⭐ Получено Stars: <b>{stars}</b>",
+        parse_mode="HTML"
+    )
+
+    await callback.answer()
+
+
+# =========================================================
+# ADMIN TEXT
+# =========================================================
+
+@dp.message(
+    F.from_user.id == ADMIN_ID,
+    F.text
+)
+async def admin_text_handler(message: Message):
+
+    user_id = message.from_user.id
+    text = (message.text or "").strip()
+
+    if not text:
+        return
+
+    mode = admin_edit_mode.get(user_id)
+
+    # -----------------------------------------------------
+    # ПРИЗ
+    # -----------------------------------------------------
+
+    if mode == "prize":
+
+        if not text.isdigit():
+            await message.answer(
+                "❌ Приз должен быть числом."
+            )
+            return
+
+        set_setting(
+            "prize",
+            text
+        )
+
+        del admin_edit_mode[user_id]
+
+        await message.answer(
+            f"✅ Приз изменён на "
+            f"<b>{text}₽</b>.",
+            parse_mode="HTML"
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # ВРЕМЯ
+    # -----------------------------------------------------
+
+    if mode == "time":
+
+        if (
+            len(text) != 5
+            or text[2] != ":"
+        ):
+            await message.answer(
+                "❌ Неверный формат.\n\n"
+                "Используй:\n"
+                "<code>22:00</code>",
+                parse_mode="HTML"
+            )
+            return
+
+        try:
+            hours = int(text[:2])
+            minutes = int(text[3:])
+        except ValueError:
+            await message.answer(
+                "❌ Неверное время."
+            )
+            return
+
+        if not (
+            0 <= hours <= 23
+            and 0 <= minutes <= 59
+        ):
+            await message.answer(
+                "❌ Неверное время."
+            )
+            return
+
+        set_setting(
+            "result_time",
+            text
+        )
+
+        del admin_edit_mode[user_id]
+
+        await message.answer(
+            f"✅ Время окончания изменено на "
+            f"<b>{text}</b>.",
+            parse_mode="HTML"
+        )
+
+        return
+
+
+# =========================================================
 # ПРИЁМ ФОТО
 # =========================================================
 
@@ -363,14 +609,18 @@ async def photo_handler(message: Message):
     photo_id = message.photo[-1].file_id
 
     logger.info(
-        f"PHOTO RECEIVED | user={user_id} | photo={photo_id}"
+        f"PHOTO RECEIVED | user={user_id}"
     )
 
     cur = db.cursor()
 
-    # Проверяем, не стоит ли пользователь уже в очереди
+    # Проверяем очередь
     cur.execute(
-        "SELECT user_id FROM waiting WHERE user_id = ?",
+        """
+        SELECT user_id
+        FROM waiting
+        WHERE user_id = ?
+        """,
         (user_id,)
     )
 
@@ -382,34 +632,39 @@ async def photo_handler(message: Message):
 
         return
 
-    # Ищем другого пользователя
-    cur.execute("""
+    # Ищем соперника
+    cur.execute(
+        """
         SELECT user_id, photo_id
         FROM waiting
         ORDER BY created_at
         LIMIT 1
-    """)
+        """
+    )
 
     opponent = cur.fetchone()
 
-    # =====================================================
-    # ЕСЛИ НИКОГО НЕТ — СТАВИМ В ОЧЕРЕДЬ
-    # =====================================================
+    # -----------------------------------------------------
+    # ПЕРВЫЙ УЧАСТНИК
+    # -----------------------------------------------------
 
     if not opponent:
 
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO waiting(
                 user_id,
                 photo_id,
                 created_at
             )
             VALUES (?, ?, ?)
-        """, (
-            user_id,
-            photo_id,
-            datetime.now().isoformat()
-        ))
+            """,
+            (
+                user_id,
+                photo_id,
+                datetime.now().isoformat()
+            )
+        )
 
         db.commit()
 
@@ -426,32 +681,20 @@ async def photo_handler(message: Message):
 
         return
 
-    # =====================================================
-    # ПРОВЕРКА, ЧТО ЭТО НЕ САМ ПОЛЬЗОВАТЕЛЬ
-    # =====================================================
-
-    if opponent["user_id"] == user_id:
-
-        await message.answer(
-            "⏳ Ты уже находишься в очереди."
-        )
-
-        return
-
-    # =====================================================
-    # УДАЛЯЕМ ИЗ ОЧЕРЕДИ
-    # =====================================================
+    # -----------------------------------------------------
+    # СОЗДАЁМ БАТЛ
+    # -----------------------------------------------------
 
     cur.execute(
-        "DELETE FROM waiting WHERE user_id = ?",
+        """
+        DELETE FROM waiting
+        WHERE user_id = ?
+        """,
         (opponent["user_id"],)
     )
 
-    # =====================================================
-    # СОЗДАЁМ БАТЛ
-    # =====================================================
-
-    cur.execute("""
+    cur.execute(
+        """
         INSERT INTO battles(
             user1_id,
             user1_photo,
@@ -460,26 +703,27 @@ async def photo_handler(message: Message):
             created_at
         )
         VALUES (?, ?, ?, ?, ?)
-    """, (
-        opponent["user_id"],
-        opponent["photo_id"],
-        user_id,
-        photo_id,
-        datetime.now().isoformat()
-    ))
+        """,
+        (
+            opponent["user_id"],
+            opponent["photo_id"],
+            user_id,
+            photo_id,
+            datetime.now().isoformat()
+        )
+    )
 
     battle_id = cur.lastrowid
 
     db.commit()
 
     logger.info(
-        f"BATTLE CREATED | battle={battle_id} | "
-        f"user1={opponent['user_id']} | user2={user_id}"
+        f"BATTLE CREATED | battle={battle_id}"
     )
 
-    # =====================================================
-    # ПУБЛИКУЕМ ФОТО 1
-    # =====================================================
+    # -----------------------------------------------------
+    # ФОТО 1
+    # -----------------------------------------------------
 
     sent1 = await bot.send_photo(
         chat_id=CHANNEL,
@@ -491,9 +735,9 @@ async def photo_handler(message: Message):
         parse_mode="HTML"
     )
 
-    # =====================================================
-    # ПУБЛИКУЕМ ФОТО 2
-    # =====================================================
+    # -----------------------------------------------------
+    # ФОТО 2
+    # -----------------------------------------------------
 
     sent2 = await bot.send_photo(
         chat_id=CHANNEL,
@@ -505,12 +749,9 @@ async def photo_handler(message: Message):
         parse_mode="HTML"
     )
 
-    # =====================================================
-    # СОЗДАЁМ ГОЛОСОВАНИЕ
-    # =====================================================
-
-    result_time = get_setting("result_time")
-    prize = get_setting("prize")
+    # -----------------------------------------------------
+    # ГОЛОСОВАНИЕ
+    # -----------------------------------------------------
 
     vote_message = await bot.send_message(
         chat_id=CHANNEL,
@@ -519,8 +760,8 @@ async def photo_handler(message: Message):
             f"📸 <b>ФОТОБАТЛ №{battle_id}</b>\n\n"
             f"1 — 🔥\n"
             f"2 — ❤️\n\n"
-            f"⏰ Итоги в {result_time}\n"
-            f"🏆 Приз — {prize}"
+            f"⏰ Итоги в {get_setting('result_time')}\n"
+            f"🏆 Приз — {get_setting('prize')}"
         ),
 
         parse_mode="HTML",
@@ -532,11 +773,12 @@ async def photo_handler(message: Message):
         )
     )
 
-    # =====================================================
+    # -----------------------------------------------------
     # СОХРАНЯЕМ MESSAGE ID
-    # =====================================================
+    # -----------------------------------------------------
 
-    cur.execute("""
+    cur.execute(
+        """
         UPDATE battles
 
         SET
@@ -545,47 +787,43 @@ async def photo_handler(message: Message):
             vote_message_id = ?
 
         WHERE id = ?
-    """, (
-        sent1.message_id,
-        sent2.message_id,
-        vote_message.message_id,
-        battle_id
-    ))
+        """,
+        (
+            sent1.message_id,
+            sent2.message_id,
+            vote_message.message_id,
+            battle_id
+        )
+    )
 
     db.commit()
 
-    # =====================================================
-    # УВЕДОМЛЕНИЯ УЧАСТНИКАМ
-    # =====================================================
+    # -----------------------------------------------------
+    # УВЕДОМЛЯЕМ УЧАСТНИКОВ
+    # -----------------------------------------------------
 
     try:
-
         await bot.send_message(
             opponent["user_id"],
             f"🔥 <b>Ты участвуешь в батле №{battle_id}!</b>\n\n"
             f"Твоя фотография — участник 1.",
             parse_mode="HTML"
         )
-
     except Exception as e:
-
         logger.warning(
-            f"Cannot notify user1: {e}"
+            f"USER1 NOTIFICATION ERROR: {e}"
         )
 
     try:
-
         await bot.send_message(
             user_id,
             f"🔥 <b>Ты участвуешь в батле №{battle_id}!</b>\n\n"
             f"Твоя фотография — участник 2.",
             parse_mode="HTML"
         )
-
     except Exception as e:
-
         logger.warning(
-            f"Cannot notify user2: {e}"
+            f"USER2 NOTIFICATION ERROR: {e}"
         )
 
     await message.answer(
@@ -609,42 +847,40 @@ async def vote_handler(callback: CallbackQuery):
 
     cur = db.cursor()
 
-    # Проверяем существование батла
     cur.execute(
-        "SELECT vote_message_id FROM battles WHERE id = ?",
+        """
+        SELECT vote_message_id
+        FROM battles
+        WHERE id = ?
+        """,
         (battle_id,)
     )
 
     battle = cur.fetchone()
 
     if not battle:
-
         await callback.answer(
             "Батл не найден.",
             show_alert=True
         )
-
         return
 
-    # =====================================================
-    # ПРОВЕРЯЕМ СТАРЫЙ ГОЛОС
-    # =====================================================
-
-    cur.execute("""
+    cur.execute(
+        """
         SELECT participant
-
         FROM votes
-
         WHERE battle_id = ?
         AND user_id = ?
-    """, (
-        battle_id,
-        user_id
-    ))
+        """,
+        (
+            battle_id,
+            user_id
+        )
+    )
 
     old_vote = cur.fetchone()
 
-    # Если нажал на тот же вариант
+    # Уже голосовал за этого участника
     if old_vote and old_vote["participant"] == participant:
 
         await callback.answer(
@@ -654,51 +890,49 @@ async def vote_handler(callback: CallbackQuery):
 
         return
 
-    # Если был другой голос — удаляем
+    # Меняем голос
     if old_vote:
 
-        cur.execute("""
+        cur.execute(
+            """
             DELETE FROM votes
-
             WHERE battle_id = ?
             AND user_id = ?
-        """, (
-            battle_id,
-            user_id
-        ))
+            """,
+            (
+                battle_id,
+                user_id
+            )
+        )
 
-    # Добавляем новый
-    cur.execute("""
+    cur.execute(
+        """
         INSERT INTO votes(
             battle_id,
             user_id,
             participant
         )
         VALUES (?, ?, ?)
-    """, (
-        battle_id,
-        user_id,
-        participant
-    ))
+        """,
+        (
+            battle_id,
+            user_id,
+            participant
+        )
+    )
 
     db.commit()
 
-    # =====================================================
-    # ПОЛУЧАЕМ ОБЩИЕ ГОЛОСА
-    # =====================================================
+    totals = get_total_votes(
+        battle_id
+    )
 
-    totals = get_total_votes(battle_id)
-
-    # =====================================================
-    # ОБНОВЛЯЕМ КНОПКИ
-    # =====================================================
-
+    # Обновляем кнопки
     try:
 
         await bot.edit_message_reply_markup(
             chat_id=CHANNEL,
             message_id=battle["vote_message_id"],
-
             reply_markup=vote_keyboard(
                 battle_id,
                 totals[1],
@@ -709,16 +943,16 @@ async def vote_handler(callback: CallbackQuery):
     except Exception as e:
 
         logger.warning(
-            f"Cannot update vote keyboard: {e}"
+            f"VOTE BUTTON UPDATE ERROR: {e}"
         )
 
     await callback.answer(
-        "Голос учтён! 🔥"
+        "Голос учтён!"
     )
 
 
 # =========================================================
-# НАЖАТИЕ «БУСТ РЕАКЦИЙ»
+# БУСТ — НАЖАТИЕ КНОПКИ
 # =========================================================
 
 @dp.callback_query(F.data.startswith("boost_"))
@@ -728,11 +962,14 @@ async def boost_start(callback: CallbackQuery):
         callback.data.split("_")[1]
     )
 
-    # Проверяем батл
     cur = db.cursor()
 
     cur.execute(
-        "SELECT id FROM battles WHERE id = ?",
+        """
+        SELECT id
+        FROM battles
+        WHERE id = ?
+        """,
         (battle_id,)
     )
 
@@ -745,21 +982,39 @@ async def boost_start(callback: CallbackQuery):
 
         return
 
-    await callback.message.answer(
-        "⚡️ <b>БУСТ РЕАКЦИЙ</b>\n\n"
-        "Выбери участника, которому хочешь добавить голоса:",
-        parse_mode="HTML",
+    # ВАЖНО:
+    # отправляем сообщение именно пользователю,
+    # а не в канал
+    try:
 
-        reply_markup=participant_keyboard(
-            battle_id
+        await bot.send_message(
+            callback.from_user.id,
+
+            "⚡️ <b>БУСТ РЕАКЦИЙ</b>\n\n"
+            "Выбери участника, которому хочешь "
+            "добавить голоса:",
+
+            parse_mode="HTML",
+
+            reply_markup=participant_keyboard(
+                battle_id
+            )
         )
-    )
 
-    await callback.answer()
+        await callback.answer(
+            "Открыл выбор участника в личке."
+        )
+
+    except Exception:
+
+        await callback.answer(
+            "❗ Сначала открой бота и нажми /start.",
+            show_alert=True
+        )
 
 
 # =========================================================
-# ВЫБОР УЧАСТНИКА ДЛЯ БУСТА
+# БУСТ — ВЫБОР УЧАСТНИКА
 # =========================================================
 
 @dp.callback_query(
@@ -774,6 +1029,7 @@ async def boost_participant(callback: CallbackQuery):
 
     user_id = callback.from_user.id
 
+    # Сохраняем выбор
     boost_pending[user_id] = {
         "battle_id": battle_id,
         "participant": participant
@@ -785,13 +1041,16 @@ async def boost_participant(callback: CallbackQuery):
         else "❤️ УЧАСТНИК 2"
     )
 
+    # Здесь callback уже из лички,
+    # поэтому message.answer нормально
     await callback.message.answer(
         f"⚡️ <b>{participant_name}</b>\n\n"
-        f"Введите количество голосов, которое хотите добавить.\n\n"
-        f"💰 Цена: <b>{BOOST_PRICE_PER_VOTE} ⭐ за 1 голос</b>\n\n"
-        f"Например, отправьте:\n"
+        f"Введите количество голосов.\n\n"
+        f"💰 Цена: "
+        f"<b>{BOOST_PRICE_PER_VOTE} ⭐ за голос</b>\n\n"
+        f"Например:\n"
         f"<code>50</code>\n\n"
-        f"Это будет стоить <b>100 ⭐</b>.",
+        f"Стоимость: <b>100 ⭐</b>",
         parse_mode="HTML"
     )
 
@@ -799,21 +1058,24 @@ async def boost_participant(callback: CallbackQuery):
 
 
 # =========================================================
-# ВВОД КОЛИЧЕСТВА ГОЛОСОВ ДЛЯ БУСТА
+# ВВОД КОЛИЧЕСТВА ГОЛОСОВ
 # =========================================================
 
-@dp.message(F.text)
+@dp.message(
+    F.text,
+    F.from_user.id != ADMIN_ID
+)
 async def boost_amount_handler(message: Message):
 
     user_id = message.from_user.id
 
-    # Если пользователь сейчас не покупает буст
     if user_id not in boost_pending:
         return
 
-    text = (message.text or "").strip()
+    text = (
+        message.text or ""
+    ).strip()
 
-    # Проверяем число
     if not text.isdigit():
 
         await message.answer(
@@ -834,24 +1096,23 @@ async def boost_amount_handler(message: Message):
 
         return
 
-    # Защита от слишком огромных значений
     if votes > 100000:
 
         await message.answer(
-            "❌ Максимум за одну покупку — 100000 голосов."
+            "❌ Максимум за одну покупку — "
+            "100000 голосов."
         )
 
         return
 
-    data = boost_pending[user_id]
+    data = boost_pending.pop(
+        user_id
+    )
 
     battle_id = data["battle_id"]
     participant = data["participant"]
 
     stars = votes * BOOST_PRICE_PER_VOTE
-
-    # Удаляем состояние
-    del boost_pending[user_id]
 
     participant_name = (
         "🔥 УЧАСТНИК 1"
@@ -859,8 +1120,17 @@ async def boost_amount_handler(message: Message):
         else "❤️ УЧАСТНИК 2"
     )
 
+    logger.info(
+        f"BOOST INVOICE | "
+        f"user={user_id} | "
+        f"battle={battle_id} | "
+        f"participant={participant} | "
+        f"votes={votes} | "
+        f"stars={stars}"
+    )
+
     # =====================================================
-    # СОЗДАЁМ ПЛАТЁЖ
+    # ОПЛАТА
     # =====================================================
 
     await bot.send_invoice(
@@ -871,8 +1141,8 @@ async def boost_amount_handler(message: Message):
 
         description=(
             f"{participant_name}\n"
-            f"Батл №{battle_id}\n\n"
-            f"Количество голосов: {votes}"
+            f"Батл №{battle_id}\n"
+            f"{votes} голосов"
         ),
 
         payload=(
@@ -921,7 +1191,6 @@ async def pre_checkout_handler(
         parts = payload.split(":")
 
         if len(parts) != 5:
-
             raise ValueError()
 
         battle_id = int(parts[1])
@@ -938,24 +1207,26 @@ async def pre_checkout_handler(
 
         return
 
-    # Проверяем пользователя
+    # Пользователь должен совпадать
     if query.from_user.id != user_id:
 
         await query.answer(
             ok=False,
-            error_message="Этот платёж предназначен другому пользователю."
+            error_message="Платёж предназначен другому пользователю."
         )
 
         return
 
     # Проверяем сумму
-    expected_stars = votes * BOOST_PRICE_PER_VOTE
+    expected_stars = (
+        votes * BOOST_PRICE_PER_VOTE
+    )
 
     if query.total_amount != expected_stars:
 
         await query.answer(
             ok=False,
-            error_message="Сумма платежа не совпадает."
+            error_message="Неверная сумма платежа."
         )
 
         return
@@ -964,7 +1235,11 @@ async def pre_checkout_handler(
     cur = db.cursor()
 
     cur.execute(
-        "SELECT id FROM battles WHERE id = ?",
+        """
+        SELECT id
+        FROM battles
+        WHERE id = ?
+        """,
         (battle_id,)
     )
 
@@ -973,6 +1248,16 @@ async def pre_checkout_handler(
         await query.answer(
             ok=False,
             error_message="Батл не найден."
+        )
+
+        return
+
+    # Проверяем участника
+    if participant not in (1, 2):
+
+        await query.answer(
+            ok=False,
+            error_message="Неверный участник."
         )
 
         return
@@ -998,7 +1283,6 @@ async def successful_payment_handler(
     payload = payment.invoice_payload
 
     if not payload.startswith("boost:"):
-
         return
 
     try:
@@ -1013,7 +1297,7 @@ async def successful_payment_handler(
     except Exception as e:
 
         logger.error(
-            f"PAYLOAD ERROR | {e}"
+            f"PAYLOAD ERROR: {e}"
         )
 
         return
@@ -1022,13 +1306,15 @@ async def successful_payment_handler(
     # ПРОВЕРЯЕМ СУММУ
     # =====================================================
 
-    expected_stars = votes * BOOST_PRICE_PER_VOTE
+    expected_stars = (
+        votes * BOOST_PRICE_PER_VOTE
+    )
 
     if payment.total_amount != expected_stars:
 
         logger.error(
             f"WRONG PAYMENT | "
-            f"expected={expected_stars} "
+            f"expected={expected_stars} | "
             f"received={payment.total_amount}"
         )
 
@@ -1039,12 +1325,25 @@ async def successful_payment_handler(
         return
 
     # =====================================================
-    # ДОБАВЛЯЕМ БУСТ
+    # ПРОВЕРЯЕМ, ЧТО ПЛАТЕЛЬЩИК ТОТ ЖЕ
+    # =====================================================
+
+    if message.from_user.id != user_id:
+
+        logger.error(
+            "USER ID MISMATCH"
+        )
+
+        return
+
+    # =====================================================
+    # ЗАПИСЫВАЕМ БУСТ
     # =====================================================
 
     cur = db.cursor()
 
-    cur.execute("""
+    cur.execute(
+        """
         INSERT INTO boosts(
             battle_id,
             user_id,
@@ -1054,14 +1353,16 @@ async def successful_payment_handler(
             created_at
         )
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        battle_id,
-        user_id,
-        participant,
-        votes,
-        payment.total_amount,
-        datetime.now().isoformat()
-    ))
+        """,
+        (
+            battle_id,
+            user_id,
+            participant,
+            votes,
+            payment.total_amount,
+            datetime.now().isoformat()
+        )
+    )
 
     db.commit()
 
@@ -1075,36 +1376,39 @@ async def successful_payment_handler(
     )
 
     # =====================================================
-    # ПОЛУЧАЕМ НОВЫЕ ГОЛОСА
+    # ПОЛУЧАЕМ ОБЩИЙ СЧЁТ
     # =====================================================
 
-    totals = get_total_votes(battle_id)
+    totals = get_total_votes(
+        battle_id
+    )
 
     # =====================================================
-    # НАХОДИМ СООБЩЕНИЕ ГОЛОСОВАНИЯ
+    # ПОЛУЧАЕМ MESSAGE ID ГОЛОСОВАНИЯ
     # =====================================================
 
-    cur.execute("""
+    cur.execute(
+        """
         SELECT vote_message_id
         FROM battles
         WHERE id = ?
-    """, (
-        battle_id,
-    ))
+        """,
+        (battle_id,)
+    )
 
     battle = cur.fetchone()
 
     if not battle:
 
         await message.answer(
-            f"✅ Оплата прошла.\n"
-            f"Добавлено голосов: +{votes}"
+            f"✅ Оплата прошла!\n\n"
+            f"Добавлено: +{votes} голосов."
         )
 
         return
 
     # =====================================================
-    # СРАЗУ ОБНОВЛЯЕМ КНОПКИ
+    # МГНОВЕННО ОБНОВЛЯЕМ КНОПКИ
     # =====================================================
 
     try:
@@ -1122,14 +1426,21 @@ async def successful_payment_handler(
             )
         )
 
+        logger.info(
+            f"BOOST BUTTONS UPDATED | "
+            f"battle={battle_id} | "
+            f"votes1={totals[1]} | "
+            f"votes2={totals[2]}"
+        )
+
     except Exception as e:
 
         logger.error(
-            f"UPDATE BOOST BUTTONS ERROR | {e}"
+            f"BOOST BUTTON UPDATE ERROR: {e}"
         )
 
     # =====================================================
-    # СООБЩЕНИЕ ПОКУПАТЕЛЮ
+    # ОТВЕТ ПОЛЬЗОВАТЕЛЮ
     # =====================================================
 
     participant_name = (
@@ -1139,298 +1450,14 @@ async def successful_payment_handler(
     )
 
     await message.answer(
-        f"✅ <b>Буст успешно куплен!</b>\n\n"
+        f"✅ <b>БУСТ УСПЕШНО КУПЛЕН!</b>\n\n"
         f"{participant_name}\n"
-        f"Добавлено: <b>+{votes} голосов</b>\n"
-        f"Потрачено: <b>{payment.total_amount} ⭐</b>\n\n"
+        f"Добавлено: <b>+{votes}</b>\n"
+        f"Стоимость: <b>{payment.total_amount} ⭐</b>\n\n"
         f"📊 Текущий счёт:\n"
         f"🔥 {totals[1]} | ❤️ {totals[2]}",
         parse_mode="HTML"
     )
-
-
-# =========================================================
-# ADMIN PANEL
-# =========================================================
-
-def admin_keyboard():
-
-    prize = get_setting("prize")
-    result_time = get_setting("result_time")
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-
-            [
-                InlineKeyboardButton(
-                    text=f"🏆 Приз: {prize}",
-                    callback_data="admin_prize"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    text=f"⏰ Время: {result_time}",
-                    callback_data="admin_time"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    text="📊 Статистика",
-                    callback_data="admin_stats"
-                )
-            ]
-
-        ]
-    )
-
-
-# =========================================================
-# /ADMIN
-# =========================================================
-
-@dp.message(Command("admin"))
-async def admin_handler(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
-
-        await message.answer(
-            "Нет доступа."
-        )
-
-        return
-
-    await message.answer(
-        "⚙️ <b>АДМИН-ПАНЕЛЬ</b>\n\n"
-        f"🏆 Приз: <b>{get_setting('prize')}</b>\n"
-        f"⏰ Итоги: <b>{get_setting('result_time')}</b>\n\n"
-        f"⚡️ Цена буста: <b>{BOOST_PRICE_PER_VOTE} ⭐ / голос</b>",
-        parse_mode="HTML",
-        reply_markup=admin_keyboard()
-    )
-
-
-# =========================================================
-# ADMIN — ПРИЗ
-# =========================================================
-
-@dp.callback_query(
-    F.data == "admin_prize"
-)
-async def admin_prize(callback: CallbackQuery):
-
-    if callback.from_user.id != ADMIN_ID:
-
-        await callback.answer(
-            "Нет доступа.",
-            show_alert=True
-        )
-
-        return
-
-    admin_edit_mode[ADMIN_ID] = "prize"
-
-    await callback.message.answer(
-        "🏆 Введи новый размер приза.\n\n"
-        "Например:\n"
-        "<code>2000</code>",
-        parse_mode="HTML"
-    )
-
-    await callback.answer()
-
-
-# =========================================================
-# ADMIN — ВРЕМЯ
-# =========================================================
-
-@dp.callback_query(
-    F.data == "admin_time"
-)
-async def admin_time(callback: CallbackQuery):
-
-    if callback.from_user.id != ADMIN_ID:
-
-        await callback.answer(
-            "Нет доступа.",
-            show_alert=True
-        )
-
-        return
-
-    admin_edit_mode[ADMIN_ID] = "time"
-
-    await callback.message.answer(
-        "⏰ Введи новое время окончания.\n\n"
-        "Формат:\n"
-        "<code>22:00</code>",
-        parse_mode="HTML"
-    )
-
-    await callback.answer()
-
-
-# =========================================================
-# ADMIN — СТАТИСТИКА
-# =========================================================
-
-@dp.callback_query(
-    F.data == "admin_stats"
-)
-async def admin_stats(callback: CallbackQuery):
-
-    if callback.from_user.id != ADMIN_ID:
-
-        await callback.answer(
-            "Нет доступа.",
-            show_alert=True
-        )
-
-        return
-
-    cur = db.cursor()
-
-    cur.execute(
-        "SELECT COUNT(*) AS cnt FROM battles"
-    )
-
-    battles = cur.fetchone()["cnt"]
-
-    cur.execute(
-        "SELECT COUNT(*) AS cnt FROM votes"
-    )
-
-    votes = cur.fetchone()["cnt"]
-
-    cur.execute(
-        "SELECT COALESCE(SUM(votes), 0) AS cnt FROM boosts"
-    )
-
-    boost_votes = cur.fetchone()["cnt"]
-
-    cur.execute(
-        "SELECT COALESCE(SUM(stars), 0) AS cnt FROM boosts"
-    )
-
-    stars = cur.fetchone()["cnt"]
-
-    await callback.message.answer(
-        "📊 <b>СТАТИСТИКА</b>\n\n"
-        f"⚔️ Батлов: <b>{battles}</b>\n"
-        f"🗳 Обычных голосов: <b>{votes}</b>\n"
-        f"⚡️ Купленных голосов: <b>{boost_votes}</b>\n"
-        f"⭐ Получено Stars: <b>{stars}</b>",
-        parse_mode="HTML"
-    )
-
-    await callback.answer()
-
-
-# =========================================================
-# ADMIN TEXT
-# =========================================================
-
-@dp.message(
-    F.from_user.id == ADMIN_ID,
-    F.text
-)
-async def admin_text_handler(message: Message):
-
-    user_id = message.from_user.id
-
-    text = (message.text or "").strip()
-
-    if not text:
-        return
-
-    # =====================================================
-    # РЕЖИМ ПРИЗА
-    # =====================================================
-
-    if admin_edit_mode.get(user_id) == "prize":
-
-        if not text.isdigit():
-
-            await message.answer(
-                "❌ Приз должен быть числом."
-            )
-
-            return
-
-        set_setting(
-            "prize",
-            text
-        )
-
-        del admin_edit_mode[user_id]
-
-        await message.answer(
-            f"✅ Приз изменён на "
-            f"<b>{text}₽</b>.",
-            parse_mode="HTML"
-        )
-
-        return
-
-    # =====================================================
-    # РЕЖИМ ВРЕМЕНИ
-    # =====================================================
-
-    if admin_edit_mode.get(user_id) == "time":
-
-        if (
-            len(text) != 5
-            or text[2] != ":"
-        ):
-
-            await message.answer(
-                "❌ Неверный формат.\n\n"
-                "Используй, например:\n"
-                "<code>22:00</code>",
-                parse_mode="HTML"
-            )
-
-            return
-
-        try:
-
-            hours = int(text[:2])
-            minutes = int(text[3:])
-
-        except ValueError:
-
-            await message.answer(
-                "❌ Неверное время."
-            )
-
-            return
-
-        if not (
-            0 <= hours <= 23
-            and 0 <= minutes <= 59
-        ):
-
-            await message.answer(
-                "❌ Неверное время."
-            )
-
-            return
-
-        set_setting(
-            "result_time",
-            text
-        )
-
-        del admin_edit_mode[user_id]
-
-        await message.answer(
-            f"✅ Время окончания изменено на "
-            f"<b>{text}</b>.",
-            parse_mode="HTML"
-        )
-
-        return
 
 
 # =========================================================
@@ -1439,16 +1466,20 @@ async def admin_text_handler(message: Message):
 
 async def main():
 
+    logger.info("================================")
+    logger.info("BOT STARTING")
+    logger.info("================================")
+
     logger.info(
-        "BOT STARTING..."
+        f"CHANNEL = {CHANNEL}"
     )
 
     logger.info(
-        f"CHANNEL: {CHANNEL}"
+        f"ADMIN_ID = {ADMIN_ID}"
     )
 
     logger.info(
-        f"ADMIN ID: {ADMIN_ID}"
+        f"BOOST PRICE = {BOOST_PRICE_PER_VOTE} Stars"
     )
 
     await dp.start_polling(
@@ -1457,5 +1488,4 @@ async def main():
 
 
 if __name__ == "__main__":
-
     asyncio.run(main())
