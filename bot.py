@@ -4,20 +4,12 @@ import os
 import sqlite3
 from datetime import datetime
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 
-# =========================
-# НАСТРОЙКИ
-# =========================
-
 TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL = "@pbtestboto"
-
-# =========================
-# ЛОГИ
-# =========================
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,19 +18,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# =========================
-# BOT
-# =========================
-
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN не найден в переменных FadeHost")
+    raise RuntimeError("BOT_TOKEN не найден")
 
 bot = Bot(TOKEN)
 dp = Dispatcher()
-
-# =========================
-# DATABASE
-# =========================
 
 db = sqlite3.connect(
     "battle.db",
@@ -47,381 +31,307 @@ db = sqlite3.connect(
 
 db.row_factory = sqlite3.Row
 
+db.execute("""
+CREATE TABLE IF NOT EXISTS waiting (
+    user_id INTEGER PRIMARY KEY,
+    photo_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+)
+""")
 
-def init_db():
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS waiting (
-            user_id INTEGER PRIMARY KEY,
-            photo_id TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    db.commit()
-
-
-init_db()
-
-# =========================
-# START
-# =========================
+db.commit()
 
 
 @dp.message(Command("start"))
 async def start_handler(message: Message):
-
     print(
-        f"START: {message.from_user.id}",
+        f"START | user={message.from_user.id}",
         flush=True
     )
 
     await message.answer(
-        "📸 <b>ФОТОБАТЛ</b>\n\n"
-        "Отправь фотографию.\n"
-        "Если ты первый — подождём второго участника.\n"
-        "Если второй уже ждёт — батл создастся автоматически.\n\n"
-        "/cancel — выйти из очереди.",
-        parse_mode="HTML"
+        "✅ Бот работает.\n\n"
+        "📸 Отправь фотографию."
     )
-
-
-# =========================
-# CANCEL
-# =========================
 
 
 @dp.message(Command("cancel"))
 async def cancel_handler(message: Message):
-
     user_id = message.from_user.id
 
-    result = db.execute(
+    db.execute(
         "DELETE FROM waiting WHERE user_id = ?",
         (user_id,)
     )
 
     db.commit()
 
-    if result.rowcount:
-        await message.answer(
-            "❌ Ты вышел из очереди."
-        )
-    else:
-        await message.answer(
-            "ℹ️ Ты сейчас не находишься в очереди."
-        )
+    await message.answer(
+        "❌ Ты вышел из очереди."
+    )
 
 
-# =========================
-# PHOTO
-# =========================
-
-
-@dp.message(F.photo)
-async def photo_handler(message: Message):
-
-    user_id = message.from_user.id
-
-    # Берём самое большое качество фотографии
-    photo_id = message.photo[-1].file_id
+@dp.message()
+async def message_handler(message: Message):
 
     print(
-        f"PHOTO RECEIVED: user={user_id}",
+        f"MESSAGE | user={message.from_user.id} "
+        f"type={message.content_type} "
+        f"has_photo={bool(message.photo)}",
         flush=True
     )
 
-    print(
-        f"PHOTO ID: {photo_id}",
-        flush=True
-    )
+    # ==========================================
+    # ФОТО
+    # ==========================================
 
-    # =========================
-    # ПРОВЕРЯЕМ, НЕ В ОЧЕРЕДИ ЛИ
-    # =========================
+    if message.photo:
 
-    already_waiting = db.execute(
-        """
-        SELECT user_id
-        FROM waiting
-        WHERE user_id = ?
-        """,
-        (user_id,)
-    ).fetchone()
+        user_id = message.from_user.id
+        photo_id = message.photo[-1].file_id
 
-    if already_waiting:
-
-        await message.answer(
-            "⏳ Ты уже ждёшь второго участника.\n\n"
-            "Если хочешь выйти — используй /cancel."
+        print(
+            f"PHOTO FOUND | user={user_id} | id={photo_id}",
+            flush=True
         )
 
-        return
+        # ------------------------------------------
+        # Проверяем очередь этого пользователя
+        # ------------------------------------------
 
-    # =========================
-    # ИЩЕМ СОПЕРНИКА
-    # =========================
-
-    opponent = db.execute(
-        """
-        SELECT user_id, photo_id
-        FROM waiting
-        WHERE user_id != ?
-        ORDER BY created_at ASC
-        LIMIT 1
-        """,
-        (user_id,)
-    ).fetchone()
-
-    # =========================
-    # СОПЕРНИКА НЕТ
-    # =========================
-
-    if not opponent:
-
-        db.execute(
+        exists = db.execute(
             """
-            INSERT INTO waiting(
-                user_id,
-                photo_id,
-                created_at
-            )
-            VALUES (?, ?, ?)
+            SELECT user_id
+            FROM waiting
+            WHERE user_id = ?
             """,
-            (
-                user_id,
-                photo_id,
-                datetime.now().isoformat()
+            (user_id,)
+        ).fetchone()
+
+        if exists:
+
+            await message.answer(
+                "⏳ Ты уже находишься в очереди.\n\n"
+                "Используй /cancel, если хочешь выйти."
             )
+
+            return
+
+        # ------------------------------------------
+        # Ищем первого участника
+        # ------------------------------------------
+
+        opponent = db.execute(
+            """
+            SELECT user_id, photo_id
+            FROM waiting
+            ORDER BY created_at ASC
+            LIMIT 1
+            """
+        ).fetchone()
+
+        # ==========================================
+        # ПЕРВЫЙ УЧАСТНИК
+        # ==========================================
+
+        if opponent is None:
+
+            db.execute(
+                """
+                INSERT INTO waiting(
+                    user_id,
+                    photo_id,
+                    created_at
+                )
+                VALUES (?, ?, ?)
+                """,
+                (
+                    user_id,
+                    photo_id,
+                    datetime.now().isoformat()
+                )
+            )
+
+            db.commit()
+
+            print(
+                f"QUEUE ADD | user={user_id}",
+                flush=True
+            )
+
+            await message.answer(
+                "⏳ <b>Фото принято!</b>\n\n"
+                "Ты первый участник.\n"
+                "Ждём второго.",
+                parse_mode="HTML"
+            )
+
+            return
+
+        # ==========================================
+        # ВТОРОЙ УЧАСТНИК
+        # ==========================================
+
+        opponent_id = opponent["user_id"]
+        opponent_photo = opponent["photo_id"]
+
+        print(
+            f"BATTLE | user1={opponent_id} "
+            f"user2={user_id}",
+            flush=True
+        )
+
+        # Удаляем из очереди
+        db.execute(
+            "DELETE FROM waiting WHERE user_id = ?",
+            (opponent_id,)
         )
 
         db.commit()
 
-        logger.info(
-            "USER ADDED TO QUEUE | user=%s",
-            user_id
-        )
+        # ==========================================
+        # ОТПРАВЛЯЕМ ПЕРВОЕ ФОТО
+        # ==========================================
 
-        await message.answer(
-            "⏳ <b>Фото принято!</b>\n\n"
-            "Ты первый участник.\n"
-            "Ждём второго человека.",
-            parse_mode="HTML"
-        )
+        try:
 
-        return
-
-    # =========================
-    # ВТОРОЙ УЧАСТНИК НАЙДЕН
-    # =========================
-
-    opponent_id = opponent["user_id"]
-    opponent_photo = opponent["photo_id"]
-
-    logger.info(
-        "SECOND USER FOUND | user1=%s | user2=%s",
-        opponent_id,
-        user_id
-    )
-
-    # Удаляем первого из очереди
-    db.execute(
-        """
-        DELETE FROM waiting
-        WHERE user_id = ?
-        """,
-        (opponent_id,)
-    )
-
-    db.commit()
-
-    # =========================
-    # ОТПРАВЛЯЕМ ФОТО 1
-    # =========================
-
-    try:
-
-        sent_photo_1 = await bot.send_photo(
-            chat_id=CHANNEL,
-            photo=opponent_photo,
-            caption=(
-                "📸 <b>УЧАСТНИК 1</b>"
-            ),
-            parse_mode="HTML"
-        )
-
-        logger.info(
-            "PHOTO 1 SENT | message_id=%s",
-            sent_photo_1.message_id
-        )
-
-    except Exception as error:
-
-        logger.exception(
-            "ERROR SENDING PHOTO 1"
-        )
-
-        # Возвращаем первого пользователя обратно в очередь
-        db.execute(
-            """
-            INSERT OR REPLACE INTO waiting(
-                user_id,
-                photo_id,
-                created_at
+            await bot.send_photo(
+                chat_id=CHANNEL,
+                photo=opponent_photo,
+                caption="📸 <b>УЧАСТНИК 1</b>",
+                parse_mode="HTML"
             )
-            VALUES (?, ?, ?)
-            """,
-            (
-                opponent_id,
-                opponent_photo,
-                datetime.now().isoformat()
+
+            print(
+                "CHANNEL PHOTO 1 OK",
+                flush=True
             )
-        )
 
-        db.commit()
+        except Exception as e:
 
-        await message.answer(
-            "❌ Не удалось отправить батл в канал.\n\n"
-            "Проверь, что бот является администратором "
-            "канала и имеет право публиковать сообщения."
-        )
+            logger.exception(
+                "CHANNEL PHOTO 1 ERROR"
+            )
 
-        return
+            await message.answer(
+                "❌ Не удалось отправить первое фото в канал."
+            )
 
-    # =========================
-    # ОТПРАВЛЯЕМ ФОТО 2
-    # =========================
+            return
 
-    try:
+        # ==========================================
+        # ОТПРАВЛЯЕМ ВТОРОЕ ФОТО
+        # ==========================================
 
-        sent_photo_2 = await bot.send_photo(
-            chat_id=CHANNEL,
-            photo=photo_id,
-            caption=(
-                "📸 <b>УЧАСТНИК 2</b>"
-            ),
-            parse_mode="HTML"
-        )
+        try:
 
-        logger.info(
-            "PHOTO 2 SENT | message_id=%s",
-            sent_photo_2.message_id
-        )
+            await bot.send_photo(
+                chat_id=CHANNEL,
+                photo=photo_id,
+                caption="📸 <b>УЧАСТНИК 2</b>",
+                parse_mode="HTML"
+            )
 
-    except Exception as error:
+            print(
+                "CHANNEL PHOTO 2 OK",
+                flush=True
+            )
 
-        logger.exception(
-            "ERROR SENDING PHOTO 2"
-        )
+        except Exception as e:
 
-        await message.answer(
-            "❌ Первое фото отправилось, "
-            "но второе не удалось отправить."
-        )
+            logger.exception(
+                "CHANNEL PHOTO 2 ERROR"
+            )
 
-        return
+            await message.answer(
+                "❌ Не удалось отправить второе фото в канал."
+            )
 
-    # =========================
-    # СООБЩЕНИЕ О БАТЛЕ
-    # =========================
+            return
 
-    try:
+        # ==========================================
+        # СООБЩЕНИЕ БАТЛА
+        # ==========================================
 
         await bot.send_message(
             chat_id=CHANNEL,
             text=(
                 "📸 <b>ФОТОБАТЛ</b>\n\n"
                 "🔥 Участник 1\n"
-                "❤️ Участник 2\n\n"
-                "Голосование скоро будет добавлено."
+                "❤️ Участник 2"
             ),
             parse_mode="HTML"
         )
 
-        logger.info(
-            "BATTLE PUBLISHED | user1=%s | user2=%s",
-            opponent_id,
-            user_id
-        )
+        # ==========================================
+        # ОТВЕТ ВТОРОМУ
+        # ==========================================
 
-    except Exception:
-
-        logger.exception(
-            "ERROR SENDING BATTLE MESSAGE"
-        )
-
-    # =========================
-    # ОТВЕТ УЧАСТНИКАМ
-    # =========================
-
-    await message.answer(
-        "🔥 <b>Батл создан!</b>\n\n"
-        "Твоя фотография — <b>участник 2</b>.",
-        parse_mode="HTML"
-    )
-
-    try:
-
-        await bot.send_message(
-            chat_id=opponent_id,
-            text=(
-                "🔥 <b>Батл создан!</b>\n\n"
-                "Твоя фотография — <b>участник 1</b>."
-            ),
+        await message.answer(
+            "🔥 <b>Батл создан!</b>\n\n"
+            "Ты — участник 2.",
             parse_mode="HTML"
         )
 
-    except Exception as error:
+        # ==========================================
+        # УВЕДОМЛЯЕМ ПЕРВОГО
+        # ==========================================
 
-        logger.warning(
-            "Не удалось уведомить первого участника: %s",
-            error
-        )
+        try:
 
+            await bot.send_message(
+                chat_id=opponent_id,
+                text=(
+                    "🔥 <b>Батл создан!</b>\n\n"
+                    "Ты — участник 1."
+                ),
+                parse_mode="HTML"
+            )
 
-# =========================
-# ЛЮБОЕ ДРУГОЕ СООБЩЕНИЕ
-# =========================
+        except Exception as e:
 
+            logger.warning(
+                "USER NOTIFICATION ERROR: %s",
+                e
+            )
 
-@dp.message()
-async def other_message_handler(message: Message):
+        return
+
+    # ==========================================
+    # НЕ ФОТО
+    # ==========================================
 
     print(
-        f"MESSAGE RECEIVED: type={message.content_type}",
+        f"NOT PHOTO | type={message.content_type}",
         flush=True
     )
-
-    # Не отвечаем на всё подряд,
-    # чтобы бот не спамил пользователю.
-
-
-# =========================
-# START BOT
-# =========================
 
 
 async def main():
 
-    logger.info(
-        "=============================="
+    print(
+        "==============================",
+        flush=True
     )
 
-    logger.info(
-        "PHOTO BATTLE BOT STARTING"
+    print(
+        "BOT STARTING",
+        flush=True
     )
 
-    logger.info(
-        "CHANNEL = %s",
-        CHANNEL
+    print(
+        f"TOKEN EXISTS: {bool(TOKEN)}",
+        flush=True
     )
 
-    logger.info(
-        "TOKEN EXISTS = %s",
-        bool(TOKEN)
+    print(
+        f"CHANNEL: {CHANNEL}",
+        flush=True
     )
 
-    logger.info(
-        "=============================="
+    print(
+        "==============================",
+        flush=True
     )
 
     await dp.start_polling(bot)
